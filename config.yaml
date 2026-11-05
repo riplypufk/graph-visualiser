@@ -1,0 +1,6 @@
+package_name: curl
+repository: ./test_repository.txt
+test_repository_mode: true
+package_version: "8.10.1-r0"
+graph_image_file: dependencies.png
+ascii_tree: true
