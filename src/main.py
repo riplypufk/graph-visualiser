@@ -6,6 +6,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
+from src.dependencies import DependencyError, get_direct_dependencies
 
 import yaml
 
@@ -224,26 +225,27 @@ def load_config(path: Path) -> Config:
 
     return validate_config(data, path.resolve().parent)
 
+def print_direct_dependencies(
+    config: Config,
+) -> None:
+    dependencies = get_direct_dependencies(
+        repository=config.repository,
+        package_name=config.package_name,
+        package_version=config.package_version,
+    )
 
-def print_config(config: Config) -> None:
-    print("Параметры конфигурации:")
-    print(f"package_name: {config.package_name}")
-    print(f"repository: {config.repository}")
+    print("Прямые зависимости:")
 
-    test_mode = str(config.test_repository_mode).lower()
-    print(f"test_repository_mode: {test_mode}")
+    if not dependencies:
+        print("(нет)")
+        return
 
-    print(f"package_version: {config.package_version}")
-    print(f"graph_image_file: {config.graph_image_file}")
-
-    ascii_mode = str(config.ascii_tree).lower()
-    print(f"ascii_tree: {ascii_mode}")
+    for dependency in dependencies:
+        print(dependency)
 
 
 def parse_arguments() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Визуализатор зависимостей: этап 1."
-    )
+    parser = argparse.ArgumentParser()
 
     parser.add_argument(
         "-c",
@@ -269,7 +271,16 @@ def main() -> int:
         )
         return 2
 
-    print_config(config)
+    try:
+        print_direct_dependencies(config)
+
+    except DependencyError as error:
+        print(
+            f"Ошибка получения зависимостей:\n{error}",
+            file=sys.stderr,
+        )
+        return 3
+
     return 0
 
 
