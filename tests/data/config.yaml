@@ -1,0 +1,6 @@
+package_name: A
+repository: looped_repository.txt
+test_repository_mode: true
+package_version: "1"
+graph_image_file: dependencies.png
+ascii_tree: false

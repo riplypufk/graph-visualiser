@@ -1,5 +1,5 @@
 package_name: curl
-repository: https://dl-cdn.alpinelinux.org/alpine/v3.20/main/x86_64
+repository: "https://dl-cdn.alpinelinux.org/alpine/v3.20/main/x86_64"
 test_repository_mode: false
 package_version: "8.14.1-r2"
 graph_image_file: dependencies.png

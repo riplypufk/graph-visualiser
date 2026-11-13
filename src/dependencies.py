@@ -10,18 +10,17 @@ from urllib.request import Request, urlopen
 APKINDEX_KEY_LENGTH = 1
 APKINDEX_SEPARATOR_POSITION = 1
 APKINDEX_VALUE_START = 2
-
+REQUEST_TIMEOUT_SECONDS = 15
 
 class DependencyError(Exception):
     """Ошибка получения или разбора информации о зависимостях."""
-
 
 @dataclass(frozen=True)
 class PackageInfo:
     name: str
     version: str
     dependencies: tuple[str, ...]
-
+    provides: tuple[str, ...] = ()
 
 def build_apkindex_url(repository: str) -> str:
     repository = repository.rstrip("/")
@@ -30,7 +29,6 @@ def build_apkindex_url(repository: str) -> str:
         return repository
 
     return f"{repository}/APKINDEX.tar.gz"
-
 
 def download_apkindex(repository: str) -> bytes:
     """Скачивает APKINDEX.tar.gz из репозитория."""
@@ -44,7 +42,7 @@ def download_apkindex(repository: str) -> bytes:
     )
 
     try:
-        with urlopen(request, timeout=15) as response:
+        with urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
             return response.read()
 
     except HTTPError as error:
@@ -127,62 +125,80 @@ def parse_dependencies(value: str) -> tuple[str, ...]:
     return tuple(dependencies)
 
 
-def create_package(fields: dict) -> PackageInfo | None:
-    name = fields.get("P")
-    version = fields.get("V")
 
+def create_package(
+    name: str | None,
+    version: str | None,
+    dependencies: tuple[str, ...],
+    provides: tuple[str, ...],
+) -> PackageInfo | None:
     if name is None or version is None:
         return None
 
     return PackageInfo(
         name=name,
         version=version,
-        dependencies=fields.get("D", ()),
+        dependencies=dependencies,
+        provides=provides,
     )
 
 
-def parse_apkindex_line(
-    line: str,
+def update_package_fields(
+    key: str,
+    value: str,
     fields: dict,
 ) -> None:
-    if len(line) <= APKINDEX_SEPARATOR_POSITION:
-        return
-
-    if line[APKINDEX_SEPARATOR_POSITION] != ":":
-        return
-
-    key = line[0]
-    value = line[APKINDEX_VALUE_START:].strip()
-
     if key == "P":
-        fields["P"] = value
+        fields["name"] = value.strip()
+
     elif key == "V":
-        fields["V"] = value
+        fields["version"] = value.strip()
+
     elif key == "D":
-        fields["D"] = parse_dependencies(value)
+        fields["dependencies"] = parse_dependencies(value)
+
+    elif key == "p":
+        fields["provides"] = parse_dependencies(value)
+
+
+def _create_empty_package_fields() -> dict:
+    return {
+        "name": None,
+        "version": None,
+        "dependencies": (),
+        "provides": (),
+    }
+
+
+def _finalize_package(fields: dict, packages: list[PackageInfo]) -> None:
+    package = create_package(**fields)
+    if package is not None:
+        packages.append(package)
 
 
 def parse_apkindex(index: str) -> list[PackageInfo]:
-    packages = []
-    fields = {}
+    packages: list[PackageInfo] = []
+    fields = _create_empty_package_fields()
 
     for raw_line in index.splitlines():
         line = raw_line.strip()
 
         if not line:
-            package = create_package(fields)
-            if package is not None:
-                packages.append(package)
-            fields = {}
+            _finalize_package(fields, packages)
+            fields = _create_empty_package_fields()
             continue
 
-        parse_apkindex_line(line, fields)
+        if (
+            len(line) < APKINDEX_VALUE_START
+            or line[APKINDEX_SEPARATOR_POSITION] != ":"
+        ):
+            continue
 
-    package = create_package(fields)
-    if package is not None:
-        packages.append(package)
+        update_package_fields(line[0], line[APKINDEX_VALUE_START:], fields)
 
+    _finalize_package(fields, packages)
     return packages
+
 
 def find_package(
     packages: list[PackageInfo],
@@ -218,3 +234,12 @@ def get_direct_dependencies(
     )
 
     return package.dependencies
+
+def load_repository_packages(
+    repository: str,
+) -> list[PackageInfo]:
+
+    data = download_apkindex(repository)
+    index = extract_apkindex(data)
+
+    return parse_apkindex(index)

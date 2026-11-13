@@ -6,9 +6,23 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
-from src.dependencies import DependencyError, get_direct_dependencies
+from src.graph import (
+    GraphError,
+    DependencyGraph,
+    build_test_graph,
+    build_real_dependency_graph,
+    parse_test_repository
+)
+from src.dependencies import (
+    DependencyError,
+    get_direct_dependencies,
+    load_repository_packages,
+)
 
 import yaml
+
+EXIT_CONFIG_ERROR = 2
+EXIT_GRAPH_ERROR = 3
 
 
 REQUIRED_KEYS = {
@@ -116,19 +130,18 @@ def validate_repository(
     value = value.strip()
 
     if test_mode:
-        validate_test_file(value, config_dir)
-    else:
-        validate_repository_url(value)
+        path = Path(value).expanduser()
+        if not path.is_absolute():
+            path = (config_dir / path).resolve()
 
+        validate_test_file(path)
+        return str(path)
+
+    validate_repository_url(value)
     return value
 
 
-def validate_test_file(value: str, config_dir: Path) -> None:
-    path = Path(value).expanduser()
-
-    if not path.is_absolute():
-        path = config_dir / path
-
+def validate_test_file(path: Path) -> None:
     if not path.exists():
         raise ConfigError(
             f"Тестовый файл репозитория не найден: {path}"
@@ -200,49 +213,46 @@ def validate_config(data: object, config_dir: Path) -> Config:
     )
 
 
-def load_config(path: Path) -> Config:
-    if not path.exists():
-        raise ConfigError(f"Файл конфигурации не найден: {path}")
-
-    if not path.is_file():
-        message = (
-            f"Путь конфигурации не является файлом: {path}"
-        )
-        raise ConfigError(message)
-
+def load_config(config_path: Path) -> Config:
     try:
-        with path.open("r", encoding="utf-8") as stream:
-            data = yaml.safe_load(stream)
+        with open(config_path, "r", encoding="utf-8") as file:
+            data = yaml.safe_load(file)
 
-    except yaml.YAMLError as error:
-        raise ConfigError(
-            f"Некорректный YAML: {error}"
-        ) from error
+        return validate_config(data, config_path.parent)
 
     except OSError as error:
-        message = f"Не удалось прочитать конфигурацию: {error}"
-        raise ConfigError(message) from error
+        raise ConfigError(
+            f"Не удалось прочитать конфигурацию: {error}"
+        ) from error
+    except yaml.YAMLError as error:
+        raise ConfigError(
+            f"Ошибка разбора YAML: {error}"
+        ) from error
 
-    return validate_config(data, path.resolve().parent)
+def build_dependency_graph(config: Config) -> DependencyGraph:
+    if config.test_repository_mode:
+        return build_test_graph(
+            root_package=config.package_name,
+            repository_path=config.repository,
+        )
 
-def print_direct_dependencies(
-    config: Config,
-) -> None:
-    dependencies = get_direct_dependencies(
+    return build_real_dependency_graph(
         repository=config.repository,
         package_name=config.package_name,
         package_version=config.package_version,
     )
 
-    print("Прямые зависимости:")
 
-    if not dependencies:
-        print("(нет)")
-        return
+def print_dependency_graph(graph: DependencyGraph) -> None:
+    print("Граф зависимостей:")
 
-    for dependency in dependencies:
-        print(dependency)
-
+    for package, dependencies in graph.dependencies.items():
+        if dependencies:
+            print(
+                f"{package} -> {' '.join(dependencies)}"
+            )
+        else:
+            print(f"{package} ->")
 
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
@@ -269,19 +279,18 @@ def main() -> int:
             f"Ошибка конфигурации:\n{error}",
             file=sys.stderr,
         )
-        return 2
+        return EXIT_CONFIG_ERROR
 
     try:
-        print_direct_dependencies(config)
+        graph = build_dependency_graph(config)
+        print_dependency_graph(graph)
 
-    except DependencyError as error:
+    except GraphError as error:
         print(
-            f"Ошибка получения зависимостей:\n{error}",
+            f"Ошибка построения графа:\n{error}",
             file=sys.stderr,
         )
-        return 3
-
-    return 0
+        return EXIT_GRAPH_ERROR
 
 
 if __name__ == "__main__":

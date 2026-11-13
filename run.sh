@@ -10,4 +10,4 @@
 # echo ""
 echo "=== Запуск программы ==="
 
-python3.10 -m src.main --config config.yaml
+python3.10 -m src.main --config tests/data/config.yaml
